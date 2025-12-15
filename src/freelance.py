@@ -1,152 +1,95 @@
-# Файл: src/freelance.py (ФІНАЛЬНИЙ: ПІДТРИМКА STRING SESSION)
 import os
 import asyncio
 from telethon import TelegramClient
-from telethon.sessions import StringSession  # Важливий імпорт
+from telethon.sessions import StringSession
 from dotenv import load_dotenv
-import google.generativeai as genai
-import textwrap
-from pathlib import Path
 
-# --- ЗАВАНТАЖЕННЯ .ENV ---
-base_dir = Path(__file__).resolve().parent.parent
-env_path = base_dir / '.env'
-load_dotenv(dotenv_path=env_path)
+# Завантаження змінних
+load_dotenv()
 
-# Отримуємо ключі
-API_ID = os.getenv("TG_API_ID")
-API_HASH = os.getenv("TG_API_HASH")
-SESSION_STRING = os.getenv("TG_SESSION_STRING")  # Читаємо довгий код
-CHANNELS_STR = os.getenv("CHANNELS_TO_PARSE", "@djinni_official")
-CHANNELS = CHANNELS_STR.split(',')
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+# --- ОТРИМАННЯ КЛЮЧІВ ---
+# Читаємо змінні середовища
+api_id_raw = os.getenv("TG_API_ID")
+api_hash = os.getenv("TG_API_HASH")
+session_string = os.getenv("TG_SESSION_STRING")
 
-# Налаштування AI
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
-    ai_model = genai.GenerativeModel('gemini-2.0-flash')
-else:
-    ai_model = None
+print(f"DEBUG: API_ID found? {bool(api_id_raw)}")
+print(f"DEBUG: API_HASH found? {bool(api_hash)}")
+print(f"DEBUG: SESSION found? {bool(session_string)}")
 
-# --- ГОЛОВНА ЛОГІКА АВТОРИЗАЦІЇ ---
-if API_ID:
-    API_ID = int(API_ID)
-
-# Тут магія: якщо є рядок сесії (для сервера), беремо його.
-# Якщо ні (локально), шукаємо файл 'anon.session'.
-if SESSION_STRING:
-    print("✅ Використовую String Session з .env (Хмарний режим)")
-    client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
-else:
-    print("📂 Використовую файлову сесію anon.session (Локальний режим)")
-    client = TelegramClient('anon', API_ID, API_HASH)
-
-
-# --- ФУНКЦІЯ ОЦІНКИ РЕЛЕВАНТНОСТІ (AI) ---
-def is_relevant_by_ai(job_description, keywords):
-    """Використовує Gemini для фільтрації."""
-    if not ai_model or not keywords:
-        return True
-
-    keyword_list_str = ", ".join([f"'{kw.strip()}'" for kw in keywords])
-
-    prompt = f"""
-    Проаналізуй текст вакансії.
-    Чи відповідає він хоча б одному з цих ключових слів/тем: {keyword_list_str}?
-    Текст: "{job_description[:600]}"
-    Відповідай тільки 'ТАК' або 'НІ'.
-    """
-
-    try:
-        response = ai_model.generate_content(prompt)
-        return "ТАК" in response.text.upper()
-    except:
-        return True
-
-
-async def fetch_telegram_jobs(limit=5, keywords=None):
-    """Асинхронна функція для отримання повідомлень з реальних каналів."""
-    jobs_list = []
-
-    try:
-        # Підключення
-        await client.connect()
-
-        # Перевірка авторизації
-        if not await client.is_user_authorized():
-            print("❌ ПОМИЛКА: Клієнт не авторизований! Перевірте TG_SESSION_STRING.")
-            return []
-
-        # Проходимо по списку каналів
-        for channel in CHANNELS:
-            try:
-                messages = await client.get_messages(channel, limit=10)
-
-                for msg in messages:
-                    if not msg.text or len(msg.text) < 50:
-                        continue
-
-                    if keywords:
-                        if not is_relevant_by_ai(msg.text, keywords):
-                            continue
-
-                    if msg.chat.username:
-                        link = f"https://t.me/{msg.chat.username}/{msg.id}"
-                    else:
-                        link = "#"
-
-                    clean_desc = msg.text.replace('**', '').replace('__', '')
-                    short_desc = textwrap.shorten(clean_desc, width=200, placeholder="...")
-
-                    title = clean_desc.split('\n')[0][:60]
-                    if not title.strip():
-                        title = "🔥 Гаряча вакансія"
-
-                    jobs_list.append({
-                        "source": f"TG: {channel}",
-                        "title": title,
-                        "link": link,
-                        "description": short_desc
-                    })
-
-                    if len(jobs_list) >= limit:
-                        break
-            except Exception as e:
-                continue
-
-            if len(jobs_list) >= limit:
-                break
-
-    except Exception as e:
-        print(f"Global Telethon Error: {e}")
-        return []
-
-    return jobs_list
-
-
-# --- ОБГОРТКА ДЛЯ ВИКЛИКУ З БОТА ---
-def get_open_jobs(limit=5, keyword=None):
-    if isinstance(keyword, str):
-        keywords = [kw.strip() for kw in keyword.replace('/', ',').replace(',', ' ').split() if kw.strip()]
-    elif isinstance(keyword, list):
-        keywords = keyword
+# Конвертація ID в число
+try:
+    if api_id_raw:
+        api_id = int(api_id_raw)
     else:
-        keywords = None
+        print("❌ CRITICAL: TG_API_ID не знайдено!")
+        api_id = None
+except ValueError:
+    print("❌ CRITICAL: TG_API_ID має бути числом!")
+    api_id = None
+
+# --- ІНІЦІАЛІЗАЦІЯ КЛІЄНТА ---
+# Пріоритет: StringSession (для хмари) -> Файл (локально)
+if session_string:
+    print("☁️ Хмарний режим: Стартую через StringSession...")
+    client = TelegramClient(StringSession(session_string), api_id, api_hash)
+else:
+    print("📂 Локальний режим: Шукаю файл .session...")
+    client = TelegramClient('anon', api_id, api_hash)
+
+
+# --- ФУНКЦІЯ ---
+def get_open_jobs(limit=5, keyword=None):
+    channels = ['@djinni_official', '@catwork', '@freelance_ua', '@python_jobs', '@remote_ua']
+    results = []
+
+    async def main():
+        try:
+            if not api_id or not api_hash:
+                print("❌ Неможливо запустити Telethon: немає ключів!")
+                return
+
+            print("🔄 Підключення до Telegram...")
+            await client.connect()
+
+            if not await client.is_user_authorized():
+                print("❌ Сесія не авторизована! Потрібен новий String Session.")
+                return
+
+            print("✅ Telethon підключено!")
+
+            for channel in channels:
+                try:
+                    async for message in client.iter_messages(channel, limit=limit):
+                        if message.text:
+                            text = message.text
+                            # Фільтрація
+                            if keyword:
+                                if isinstance(keyword, list):
+                                    if not any(k.lower() in text.lower() for k in keyword):
+                                        continue
+                                elif keyword.lower() not in text.lower():
+                                    continue
+
+                            lines = text.split('\n')
+                            title = lines[0][:100] + "..." if len(lines[0]) > 100 else lines[0]
+                            link = f"https://t.me/{message.chat.username}/{message.id}" if message.chat.username else "#"
+
+                            results.append({
+                                'source': channel,
+                                'title': title.replace('*', '').replace('_', ''),
+                                'link': link,
+                                'description': text[:200] + "..."
+                            })
+                except Exception as e:
+                    print(f"⚠️ Помилка каналу {channel}: {e}")
+
+        except Exception as e:
+            print(f"❌ Помилка Telethon: {e}")
+        finally:
+            await client.disconnect()
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    result = loop.run_until_complete(fetch_telegram_jobs(limit, keywords))
-    loop.close()
-
-    if not result:
-        return []
-
-    return result
-
-
-# --- БЛОК ТЕСТУВАННЯ ---
-if __name__ == "__main__":
-    print("🔬 Тестування з'єднання...")
-    with client:
-        client.loop.run_until_complete(client.get_me())
-        print("✅ Успішно! Telethon працює коректно.")
+    loop.run_until_complete(main())
+    return results
