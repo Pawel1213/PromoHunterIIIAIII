@@ -22,9 +22,9 @@ def clean_markdown_v1(text):
 
 # --- ІМПОРТИ ---
 try:
-    from freelance import get_open_jobs
+    from src.freelance import get_open_jobs
 except ImportError:
-    from freelance import get_open_jobs
+    from src.freelance import get_open_jobs
 
 try:
     from info_center import get_microtask_summary, get_earning_opportunities
