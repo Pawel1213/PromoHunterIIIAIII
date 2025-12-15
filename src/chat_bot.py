@@ -22,9 +22,11 @@ def clean_markdown_v1(text):
 
 # --- ІМПОРТИ ---
 try:
+    # Варіант для Railway (запуск через main.py)
     from src.freelance import get_open_jobs
 except ImportError:
-    from src.freelance import get_open_jobs
+    # Варіант для локальних тестів (якщо запускаєте файл з папки src)
+    from freelance import get_open_jobs
 
 try:
     from info_center import get_microtask_summary, get_earning_opportunities
