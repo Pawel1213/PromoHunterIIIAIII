@@ -2,34 +2,33 @@ import os
 import asyncio
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from dotenv import load_dotenv
 
-# Завантаження змінних
-load_dotenv()
+# --- ОТРИМАННЯ КЛЮЧІВ (ВИПРАВЛЕНО НАЗВИ) ---
+# У Railway змінні беруться напряму з os.environ, load_dotenv() не потрібен
+api_id_raw = os.getenv("TG_API_ID", "0")
+api_hash = os.getenv("TG_API_HASH", "")
+session_string = os.getenv("TG_SESSION_STRING", "")
 
-# --- ОТРИМАННЯ КЛЮЧІВ ---
-# Читаємо змінні середовища
-api_id_raw = os.getenv("TG_API_ID")
-api_hash = os.getenv("TG_API_HASH")
-session_string = os.getenv("TG_SESSION_STRING")
-
-print(f"DEBUG: API_ID found? {bool(api_id_raw)}")
-print(f"DEBUG: API_HASH found? {bool(api_hash)}")
-print(f"DEBUG: SESSION found? {bool(session_string)}")
+# Логування для перевірки (не показує самі ключі, тільки статус)
+print(f"DEBUG: TG_API_ID (raw): {api_id_raw}")
+print(f"DEBUG: TG_API_HASH exists? {bool(api_hash)}")
+print(f"DEBUG: TG_SESSION_STRING exists? {bool(session_string)}")
 
 # Конвертація ID в число
 try:
-    if api_id_raw:
-        api_id = int(api_id_raw)
-    else:
-        print("❌ CRITICAL: TG_API_ID не знайдено!")
-        api_id = None
-except ValueError:
-    print("❌ CRITICAL: TG_API_ID має бути числом!")
-    api_id = None
+    api_id = int(api_id_raw)
+    if api_id == 0:
+        raise ValueError("TG_API_ID = 0")
+except (ValueError, TypeError) as e:
+    print(f"❌ ERROR: TG_API_ID має бути числом! Перевірте змінні. ({e})")
+    api_id = 0
+
+# Перевірка наявності обов'язкових даних
+if not api_id or not api_hash:
+    print("❌ CRITICAL: TG_API_ID або TG_API_HASH відсутні!")
 
 # --- ІНІЦІАЛІЗАЦІЯ КЛІЄНТА ---
-# Пріоритет: StringSession (для хмари) -> Файл (локально)
+# Логіка: Якщо є StringSession -> Хмара, інакше -> Файл
 if session_string:
     print("☁️ Хмарний режим: Стартую через StringSession...")
     client = TelegramClient(StringSession(session_string), api_id, api_hash)
@@ -38,25 +37,26 @@ else:
     client = TelegramClient('anon', api_id, api_hash)
 
 
-# --- ФУНКЦІЯ ---
+# --- ФУНКЦІЯ ПАРСИНГУ ---
 def get_open_jobs(limit=5, keyword=None):
     channels = ['@djinni_official', '@catwork', '@freelance_ua', '@python_jobs', '@remote_ua']
     results = []
 
     async def main():
         try:
-            if not api_id or not api_hash:
-                print("❌ Неможливо запустити Telethon: немає ключів!")
+            # Перевірка перед стартом
+            if not api_id or api_id == 0 or not api_hash:
+                print("❌ Неможливо запустити Telethon: відсутні API_ID або API_HASH")
                 return
 
             print("🔄 Підключення до Telegram...")
             await client.connect()
 
             if not await client.is_user_authorized():
-                print("❌ Сесія не авторизована! Потрібен новий String Session.")
+                print("❌ Сесія не авторизована! Потрібен свіжий TG_SESSION_STRING.")
                 return
 
-            print("✅ Telethon підключено!")
+            print("✅ Telethon успішно підключено!")
 
             for channel in channels:
                 try:
@@ -89,7 +89,12 @@ def get_open_jobs(limit=5, keyword=None):
         finally:
             await client.disconnect()
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    # Для Railway/prod-середовища краще використовувати існуючий event loop
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
     loop.run_until_complete(main())
     return results
