@@ -5,7 +5,5 @@ supabase
 telethon
 requests
 beautifulsoup4
-feedparser
+lxml
 cloudscraper
-fake-useragent
-schedule
