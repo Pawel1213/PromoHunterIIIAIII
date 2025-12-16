@@ -1,4 +1,4 @@
-# Файл: src/chat_bot.py (ВЕРСИЯ 2.1: С ПОЗНАНЬЮ И РАСШИРЕННЫМ КАТАЛОГОМ)
+# Файл: src/chat_bot.py (ВЕРСИЯ 2.1: ФІКСড)
 import os
 import telebot
 from telebot import types
@@ -23,38 +23,35 @@ def clean_markdown_v1(text):
 try:
     from src.freelance import get_open_jobs
 except ImportError:
-    from freelance import get_open_jobs
+    get_open_jobs = None
 
 try:
     from src.info_center import get_microtask_summary, get_earning_opportunities
 except ImportError:
-    from info_center import get_microtask_summary, get_earning_opportunities
+    get_earning_opportunities = None
 
 try:
     from src.github_finder import get_github_jobs
 except ImportError:
-    from github_finder import get_github_jobs
+    get_github_jobs = None
 
 try:
     from src.reddit_finder import get_reddit_freebies
 except ImportError:
-    from reddit_finder import get_reddit_freebies
+    get_reddit_freebies = None
 
-# POZNAN GIGS
+# === НОВЫЙ ИМПОРТ: РАСШИРЕННЫЙ ПАРСЕР (49 ИСТОЧНИКОВ) ===
 try:
-    from src.poznan_gigs import get_poznan_gigs
-except ImportError:
-    get_poznan_gigs = None
-
-# --- НОВЫЙ ИМПОРТ: РАСШИРЕННЫЙ ПАРСЕР (49 ИСТОЧНИКОВ) ---
-try:
-    from src.PARSERS_EXPANDED import get_opportunities_by_category
+    from src.parsers import get_all_opportunities, get_opportunities_by_category
+    print("✅ parsers.py успешно импортирован (49 источников)")
 except ImportError:
     try:
-        from PARSERS_EXPANDED import get_opportunities_by_category
+        from parsers import get_all_opportunities, get_opportunities_by_category
+        print("✅ parsers.py успешно импортирован (локально)")
     except ImportError:
-        print("⚠️ Файл PARSERS_EXPANDED.py не найден!")
+        print("❌ ОШИБКА: parsers.py не найден!")
         get_opportunities_by_category = None
+        get_all_opportunities = None
 
 # --- КОНФИГУРАЦИЯ ---
 load_dotenv()
@@ -69,14 +66,14 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai.configure(api_key=GOOGLE_API_KEY)
 model = genai.GenerativeModel('gemini-2.0-flash')
 
-print("🧠 AI-Bot (Expanded v2.1) готов! (Ctrl+C для остановки)")
+print("✅ PromoHunter Bot v2.1 готов к запуску!")
 
 
 # --- ГЛАВНОЕ МЕНЮ ---
 def create_main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
 
-    btn1 = types.KeyboardButton("🌍 КАТАЛОГ (49 ист.)")  # <--- НОВАЯ ГЛАВНАЯ КНОПКА
+    btn1 = types.KeyboardButton("🌍 КАТАЛОГ (49 ист.)")
     btn2 = types.KeyboardButton("🇵🇱 Робота Познань")
     btn3 = types.KeyboardButton("💻 Вакансії (Telegram)")
     btn4 = types.KeyboardButton("🐙 GitHub Вакансії")
@@ -93,7 +90,7 @@ def create_main_menu():
 # --- ПОДМЕНЮ КАТАЛОГА ---
 def create_catalog_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    # Категории соответствуют вашему PARSERS_EXPANDED.py
+    
     btn1 = types.KeyboardButton("📂 Заробіток (Earnings)")
     btn2 = types.KeyboardButton("🎰 Бонуси (Bonuses)")
     btn3 = types.KeyboardButton("🛠 Скрипти (Scripts)")
@@ -111,7 +108,7 @@ def create_catalog_menu():
 # --- КНОПКА СОХРАНЕНИЯ ---
 def create_save_markup():
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton(text="⭐️ Зберегти в Улюблене", callback_data="save_this_item"))
+    markup.add(types.InlineKeyboardButton(text="⭐️ Зберегти", callback_data="save_this_item"))
     return markup
 
 
@@ -144,7 +141,7 @@ def callback_save_item(call):
 
         lines = message.text.split('\n')
         if lines:
-            extracted_title = lines[0].replace("🔗", "").replace("👉", "").replace("⚠️", "").strip()
+            extracted_title = lines[0].replace("🔗", "").replace("👉", "").replace("⚠️", "").strip()[:100]
 
         existing = supabase.table("saved_items").select("*").eq("user_id", user_id).eq("link", extracted_link).execute()
 
@@ -153,7 +150,7 @@ def callback_save_item(call):
         else:
             supabase.table("saved_items").insert({
                 "user_id": user_id,
-                "title": extracted_title[:100],
+                "title": extracted_title,
                 "link": extracted_link,
                 "source": "Catalog Bot"
             }).execute()
@@ -167,40 +164,67 @@ def callback_save_item(call):
 # --- КОМАНДА START ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Привіт! Обирай категорію 👇", reply_markup=create_main_menu())
+    bot.reply_to(message, "Привіт! 👋 Обирай категорію 👇", reply_markup=create_main_menu())
 
 
 # --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ОТПРАВКИ СПИСКА ---
 def send_catalog_category(chat_id, category_key, category_name):
+    """Отправить список источников по категории"""
+    
     if get_opportunities_by_category is None:
-        bot.send_message(chat_id, "❌ Модуль каталогу не підключено.")
+        bot.send_message(chat_id, "❌ Модуль каталогу не підключено (parsers.py не знайдено).")
         return
 
-    items = get_opportunities_by_category(category_key)
-    if not items:
+    try:
+        items = get_opportunities_by_category(category_key)
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ Помилка при отримані даних: {str(e)}")
+        print(f"Error fetching category {category_key}: {e}")
+        return
+
+    if not items or len(items) == 0:
         bot.send_message(chat_id, f"📭 У категорії '{category_name}' поки пусто.")
         return
 
-    bot.send_message(chat_id, f"📂 **Категорія: {category_name}** ({len(items)} джерел):", parse_mode='Markdown')
+    # Заголовок
+    header = f"📂 **{category_name}** ({len(items)} джерел)\n\n"
+    bot.send_message(chat_id, header, parse_mode='Markdown')
 
-    for item in items:
-        title = clean_markdown_v1(item['title'])
-        desc = clean_markdown_v1(item['description'])
-        link = item['link']
-        emoji = item.get('emoji', '🔹')
+    # Відправляємо кожен item
+    for i, item in enumerate(items, 1):
+        try:
+            title = clean_markdown_v1(item.get('title', 'No title'))
+            description = clean_markdown_v1(item.get('description', 'No description'))
+            link = item.get('link', '#')
+            emoji = item.get('emoji', '🔹')
+            legality = item.get('legality', 'Legal')
 
-        # Добавляем предупреждение для серых/черных ниш
-        warning = ""
-        if item.get('legality') == 'Black':
-            warning = "\n🛑 **УВАГА: ЦЕЙ РЕСУРС МОЖЕ БУТИ НЕЛЕГАЛЬНИМ!** Використовуйте тільки для ознайомлення."
-        elif item.get('legality') == 'Grey':
-            warning = "\n⚠️ _Обережно: Сіра зона._"
+            # Формуємо текст
+            warning = ""
+            if legality == 'Black':
+                warning = "\n\n🛑 **УВАГА:** Цей ресурс НЕЛЕГАЛЬНИЙ! Використовуйте тільки для ознайомлення."
+            elif legality == 'Grey':
+                warning = "\n⚠️ _Обережно: Сіра зона._"
 
-        text = f"{emoji} [{title}]({link})\nℹ️ {desc}{warning}"
+            text = f"{emoji} **[{title}]({link})**\n\n_{description}_{warning}"
 
-        # Отправляем сообщение с кнопкой сохранения
-        bot.send_message(chat_id, text, parse_mode='Markdown', disable_web_page_preview=True,
-                         reply_markup=create_save_markup())
+            # Відправляємо з кнопкою
+            bot.send_message(
+                chat_id,
+                text,
+                parse_mode='Markdown',
+                disable_web_page_preview=True,
+                reply_markup=create_save_markup()
+            )
+
+            # Затримка щоб Telegram не вдарив по rate limit
+            import time
+            if i % 5 == 0:
+                time.sleep(1)
+
+        except Exception as e:
+            print(f"Error sending item {i}: {e}")
+            continue
 
 
 # --- ГЛАВНЫЙ ОБРАБОТЧИК ---
@@ -209,7 +233,7 @@ def handle_query(message):
     user_query = message.text.lower()
     chat_id = message.chat.id
 
-    # === НАВИГАЦИЯ ПО КАТАЛОГУ (НОВОЕ) ===
+    # === НАВИГАЦІЯ КАТАЛОГУ ===
     if message.text == "🌍 КАТАЛОГ (49 ист.)":
         bot.send_message(chat_id, "Оберіть розділ каталогу:", reply_markup=create_catalog_menu())
         return
@@ -218,142 +242,161 @@ def handle_query(message):
         bot.send_message(chat_id, "Головне меню:", reply_markup=create_main_menu())
         return
 
-    # Обработка кнопок подменю (Маппинг на ключи из PARSERS_EXPANDED.py)
-    if "заробіток (earnings)" in user_query:
-        send_catalog_category(chat_id, "earnings", "Заробіток")
+    # Обработка кнопок подменю (Маппинг на ключи из parsers.py)
+    if "заробіток" in user_query:
+        send_catalog_category(chat_id, "earnings", "💰 Заробіток")
         return
-    if "бонуси (bonuses)" in user_query:
-        send_catalog_category(chat_id, "bonuses", "Бонуси")
+    if "бонуси" in user_query:
+        send_catalog_category(chat_id, "bonuses", "🎰 Бонуси")
         return
-    if "скрипти (scripts)" in user_query:
-        send_catalog_category(chat_id, "scripts", "Скрипти та Інструменти")
+    if "скрипти" in user_query:
+        send_catalog_category(chat_id, "scripts", "🛠 Скрипти та Інструменти")
         return
-    if "пропозиції (proposals)" in user_query:
-        send_catalog_category(chat_id, "proposals", "Нові Пропозиції")
+    if "пропозиції" in user_query:
+        send_catalog_category(chat_id, "proposals", "💡 Нові Пропозиції")
         return
-    if "сірі ніші (снд)" in user_query:
-        bot.send_message(chat_id,
-                         "⚠️ **Вхід у зону підвищеного ризику!**\nІнформація надається виключно в освітніх цілях.",
-                         parse_mode='Markdown')
-        send_catalog_category(chat_id, "grey_niche_cis", "Сірі Ніші (СНД)")
+    if "сірі ніші (снд)" in user_query or ("сірі" in user_query and "снд" in user_query):
+        bot.send_message(
+            chat_id,
+            "⚠️ **Вхід у зону підвищеного ризику!**\n\nЦя інформація надається виключно в освітніх цілях. Використання цих ресурсів може бути незаконним у вашій країні.",
+            parse_mode='Markdown'
+        )
+        send_catalog_category(chat_id, "grey_niche_cis", "🕷️ Сірі Ніші (СНД)")
         return
-    if "сірі ніші (європа)" in user_query:
+    if "сірі ніші (європа)" in user_query or ("сірі" in user_query and "європа" in user_query):
         bot.send_message(chat_id, "⚠️ **Вхід у зону підвищеного ризику!**", parse_mode='Markdown')
-        send_catalog_category(chat_id, "grey_niche_europe", "Сірі Ніші (Європа)")
+        send_catalog_category(chat_id, "grey_niche_europe", "🇪🇺 Сірі Ніші (Європа)")
         return
-    if "сірі ніші (сша)" in user_query:
+    if "сірі ніші (сша)" in user_query or ("сірі" in user_query and "сша" in user_query):
         bot.send_message(chat_id, "⚠️ **Вхід у зону підвищеного ризику!**", parse_mode='Markdown')
-        send_catalog_category(chat_id, "grey_niche_usa", "Сірі Ніші (США)")
+        send_catalog_category(chat_id, "grey_niche_usa", "🇺🇸 Сірі Ніші (США)")
         return
-    if "легальні маркети" in user_query:
-        send_catalog_category(chat_id, "legal_marketplaces", "Легальні Маркетплейси")
+    if "легальні" in user_query and "маркет" in user_query:
+        send_catalog_category(chat_id, "legal_marketplaces", "⚖️ Легальні Маркетплейси")
         return
 
     # === СТАРЫЕ ФУНКЦИИ ===
 
     # 1. POZNAN GIGS
     if "познань" in user_query:
-        if get_poznan_gigs:
-            bot.send_chat_action(chat_id, 'typing')
-            gigs = get_poznan_gigs()
-            response_text = "🇵🇱 **ПІДРОБІТОК ПОЗНАНЬ:**\n\n"
-            for gig in gigs:
+        bot.send_chat_action(chat_id, 'typing')
+        poznan_items = get_opportunities_by_category("poznan_gigs")
+        if poznan_items:
+            response_text = "🇵🇱 **ПІДРОБІТОК ПОЗНАНЬ:** (9 джерел)\n\n"
+            for gig in poznan_items:
                 title = clean_markdown_v1(gig['title'])
                 link = gig['link']
                 emoji = gig.get('emoji', '👉')
                 rate = gig.get('min_earning', 0)
-                response_text += f"{emoji} [{title}]({link})\n💰 {rate} zł/h\n---\n"
+                response_text += f"{emoji} [{title}]({link})\n💰 {rate} zł/h\n\n"
             bot.send_message(chat_id, response_text, parse_mode='Markdown', disable_web_page_preview=True)
         else:
-            bot.reply_to(message, "❌ Модуль Познань не знайдено.")
+            bot.reply_to(message, "❌ Дані про Познань не знайдені.")
         return
 
     # 2. TELEGRAM JOBS
     if "вакансії" in user_query and "telegram" in user_query:
         bot.send_chat_action(chat_id, 'typing')
-        bot.reply_to(message, "🔍 Шукаю вакансії у Telegram...")
-        try:
-            jobs = get_open_jobs(limit=5)
-            if not jobs:
-                bot.send_message(chat_id, "Вакансій не знайдено.")
-            else:
-                for job in jobs:
-                    title = clean_markdown_v1(job['title'])
-                    desc = clean_markdown_v1(job['description'])
-                    text = f"ℹ️ {job['source']}\n💼 {title}\n📝 _{desc}_"
-                    bot.send_message(chat_id, text, parse_mode='Markdown', reply_markup=create_save_markup())
-        except Exception as e:
-            bot.reply_to(message, f"Error: {e}")
+        if get_open_jobs:
+            try:
+                jobs = get_open_jobs(limit=5)
+                if not jobs:
+                    bot.send_message(chat_id, "Вакансій не знайдено.")
+                else:
+                    for job in jobs:
+                        title = clean_markdown_v1(job['title'])
+                        desc = clean_markdown_v1(job['description'])
+                        text = f"ℹ️ {job['source']}\n💼 {title}\n📝 _{desc}_"
+                        bot.send_message(chat_id, text, parse_mode='Markdown', reply_markup=create_save_markup())
+            except Exception as e:
+                bot.reply_to(message, f"Error: {e}")
+        else:
+            bot.reply_to(message, "❌ Модуль не доступний.")
         return
 
     # 3. GITHUB
     if "github" in user_query:
         bot.send_chat_action(chat_id, 'typing')
-        jobs = get_github_jobs(limit=5)
-        if isinstance(jobs, list):
-            for job in jobs:
-                text = f"🐙 [{clean_markdown_v1(job['title'])}]({job['link']})\n📝 {clean_markdown_v1(job['description'])}"
-                bot.send_message(chat_id, text, parse_mode='Markdown', reply_markup=create_save_markup())
+        if get_github_jobs:
+            try:
+                jobs = get_github_jobs(limit=5)
+                if isinstance(jobs, list):
+                    for job in jobs:
+                        text = f"🐙 [{clean_markdown_v1(job['title'])}]({job['link']})\n📝 {clean_markdown_v1(job['description'])}"
+                        bot.send_message(chat_id, text, parse_mode='Markdown', reply_markup=create_save_markup())
+                else:
+                    bot.reply_to(message, str(jobs))
+            except Exception as e:
+                bot.reply_to(message, f"Error: {e}")
         else:
-            bot.reply_to(message, str(jobs))
+            bot.reply_to(message, "❌ GitHub модуль не знайден.")
         return
 
     # 4. REDDIT FREEBIES
     if "халява" in user_query:
         bot.send_chat_action(chat_id, 'typing')
-        freebies = get_reddit_freebies(limit=5)
-        if isinstance(freebies, list) and not isinstance(freebies[0], str):
-            for item in freebies:
-                text = f"🎁 {item['title']}\n🔗 {item['link']}"
-                bot.send_message(chat_id, text, reply_markup=create_save_markup())
+        if get_reddit_freebies:
+            try:
+                freebies = get_reddit_freebies(limit=5)
+                if isinstance(freebies, list) and len(freebies) > 0:
+                    for item in freebies:
+                        text = f"🎁 {item['title']}\n🔗 {item['link']}"
+                        bot.send_message(chat_id, text, reply_markup=create_save_markup())
+                else:
+                    bot.reply_to(message, str(freebies) if freebies else "Нічого не знайдено.")
+            except Exception as e:
+                bot.reply_to(message, f"Error: {e}")
         else:
-            bot.reply_to(message, str(freebies))
+            bot.reply_to(message, "❌ Reddit модуль не знайден.")
         return
 
     # 5. ACTUAL EARNINGS
-    if "заробіток" in user_query and "актуальний" in user_query:
+    if "актуальний" in user_query and "заробіток" in user_query:
         bot.send_chat_action(chat_id, 'typing')
-        opps = get_earning_opportunities()
-        txt = "💰 **Можливості:**\n\n"
-        for item in opps:
-            if item['link'] == "#":
-                txt += f"\n**{clean_markdown_v1(item['title'])}**\n"
-            else:
-                txt += f"🔗 [{clean_markdown_v1(item['title'])}]({item['link']})\n"
-        bot.send_message(chat_id, txt, parse_mode='Markdown', disable_web_page_preview=True)
-        return
-
-    # 6. SCAM CHECK
-    if "скам" in user_query:
-        bot.reply_to(message, "🔗 Надішліть посилання для перевірки.")
-        # Тут можна додати register_next_step_handler, як у минулому коді
-        return
-
-    # 7. FAVORITES
-    if "улюблене" in user_query:
-        try:
-            res = supabase.table("saved_items").select("*").eq("user_id", chat_id).order("created_at",
-                                                                                         desc=True).execute()
-            if not res.data:
-                bot.reply_to(message, "📭 Пусто.")
-            else:
-                txt = "⭐️ **Збережене:**\n\n"
-                for i in res.data:
-                    txt += f"📌 [{clean_markdown_v1(i.get('title', 'Link'))}]({i['link']})\n"
+        if get_earning_opportunities:
+            try:
+                opps = get_earning_opportunities()
+                txt = "💰 **Актуальні можливості заробітку:**\n\n"
+                for item in opps:
+                    if item['link'] == "#":
+                        txt += f"\n**{clean_markdown_v1(item['title'])}**\n"
+                    else:
+                        txt += f"🔗 [{clean_markdown_v1(item['title'])}]({item['link']})\n"
                 bot.send_message(chat_id, txt, parse_mode='Markdown', disable_web_page_preview=True)
-        except:
-            bot.reply_to(message, "Помилка БД.")
+            except Exception as e:
+                bot.reply_to(message, f"Error: {e}")
+        else:
+            bot.reply_to(message, "❌ Модуль не доступний.")
         return
 
-    # 8. AI DEFAULT
+    # 6. FAVORITES
+    if "улюблене" in user_query or "улюбленое" in user_query:
+        try:
+            res = supabase.table("saved_items").select("*").eq("user_id", chat_id).order("created_at", desc=True).execute()
+            if not res.data:
+                bot.reply_to(message, "📭 Ви ще нічого не зберегли.")
+            else:
+                txt = "⭐️ **Ваше улюблене:**\n\n"
+                for i in res.data:
+                    title = clean_markdown_v1(i.get('title', 'Link'))
+                    txt += f"📌 [{title}]({i['link']})\n"
+                bot.send_message(chat_id, txt, parse_mode='Markdown', disable_web_page_preview=True)
+        except Exception as e:
+            print(f"Favorites error: {e}")
+            bot.reply_to(message, "❌ Помилка при отриманні улюбленого.")
+        return
+
+    # 7. DEFAULT AI RESPONSE
     bot.send_chat_action(chat_id, 'typing')
     try:
-        prompt = f"Користувач пише: {message.text}. Відповідай коротко українською. Ти бот PromoHunter."
+        prompt = f"Користувач пише: '{message.text}'. Відповідай коротко українською мовою. Ти - бот PromoHunter який допомагає людям знаходити способи заробітку."
         resp = model.generate_content(prompt)
-        bot.reply_to(message, resp.text, parse_mode='Markdown')
-    except:
-        bot.reply_to(message, "Я тут, але AI відпочиває.")
+        bot.reply_to(message, resp.text[:4096], parse_mode='Markdown')  # Ліміт 4096 символів
+    except Exception as e:
+        print(f"AI error: {e}")
+        bot.reply_to(message, "🤖 Я тут, але AI відпочиває. Спробуйте пізніше.")
 
 
 if __name__ == "__main__":
-    bot.infinity_polling(timeout=60, long_polling_timeout=60)
+    print("🚀 Запуск PromoHunter Bot v2.1...")
+    bot.infinity_polling(timeout=60, long_polling_timeout=60, skip_pending=True)
