@@ -6,4 +6,7 @@ telethon
 requests
 beautifulsoup4
 lxml
+feedparser
 cloudscraper
+fake-useragent
+schedule
